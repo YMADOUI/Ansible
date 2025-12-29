@@ -42,7 +42,7 @@ wsl sshpass -V
 
 ```powershell
 cd C:\Users\%USERNAME%
-wsl git clone https://github.com/PASSMAN/ansible-mikrotik.git Ansible
+wsl git clone https://github.com/YMADOUI/Ansible.git Ansible
 cd Ansible
 ```
 
