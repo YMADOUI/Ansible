@@ -1,0 +1,97 @@
+# ================== Configuration Mikrotik wAP 60G ==================
+# Site: {{ NUMINSTALLATION }}
+# Équipement: {{ TOPOSHOSTNAME }}
+# Mode: {{ MODE }}
+# Généré le: {{ ansible_date_time.iso8601 }}
+
+# ================== Configuration wlan60-1 ==================
+/interface w60g set [find where name="wlan60-1"] ssid={{ NEWSSID }} password={{ TOPOSRW }} disabled=no
+
+{% if MODE == 'bridge' %}
+# Configuration MASTER - Mode Bridge
+/interface w60g set [find where name="wlan60-1"] put-stations-in-bridge=bridge isolate-stations=yes 
+{% else %}
+# Configuration SLAVE - Mode Station-Bridge
+# Pas de configuration supplémentaire si déjà appairé
+{% endif %}
+
+# ================== Ports du bridge ==================
+/interface bridge port add bridge=bridge interface=ether1 comment=defconf
+/interface bridge port add bridge=bridge interface=wlan60-1 comment=defconf
+
+# ================== Interface Lists ==================
+/interface list add name=WAN
+/interface list add name=LAN
+/interface list member add list=LAN interface=ether1
+/interface list member add list=WAN interface=wlan60-1
+
+# ================== IP Management sur bridge ==================
+# Ajouter la nouvelle IP de management (garde l'ancienne 192.168.88.x)
+/ip address add address={{ TOPOSIP }}/20 comment="ip management" interface=bridge network=10.10.0.0
+
+# Configurer la route par défaut
+/ip route add dst-address=0.0.0.0/0 gateway=10.10.0.1 distance=1
+
+# ================== SETTINGS ==================
+/system leds
+set 0 leds=led1,led2,led3,led4,led5
+
+/system note
+set show-at-login=no
+
+/system ntp client
+set enabled=yes
+
+/system ntp client servers
+add address=10.10.0.1
+
+# ================== RADIUS (login) ==================
+/radius
+add accounting-port=1805 address=212.155.93.171 authentication-port=1804 service=login require-message-auth=no secret=Ke4TJh2d9Rsjtjkq4rSbls
+
+/user aaa set use-radius=yes
+
+/radius
+add accounting-port=1805 address=212.155.93.172 authentication-port=1804 service=login require-message-auth=no secret=Ke4TJh2d9Rsjtjkq4rSbls
+
+/user aaa set use-radius=yes
+
+# ================== SNMP ==================
+/snmp set enabled=yes trap-version=2
+/snmp community remove [find where name={{ TOPOSSNMP }}]
+/snmp community add name={{ TOPOSSNMP }} addresses=0.0.0.0/0
+
+# ================== System Identity ==================
+/system identity set name={{ TOPOSHOSTNAME }}
+
+# ================== Admin Password ==================
+/user set admin password={{ TOPOSRW }}
+
+# ================== CERTIFICATE ==================
+# Supprimer les anciens certificats s'ils existent
+/certificate remove [find where name="webfig-ca"]
+/certificate remove [find where name="webfig-cert"]
+
+# Créer CA + signature
+/certificate add name="webfig-ca" common-name="webfig-ca" key-usage=key-cert-sign,crl-sign
+/certificate sign [find where name="webfig-ca"]
+
+# Cert serveur avec usage TLS
+/certificate add name="webfig-cert" common-name="webfig" key-usage=digital-signature,key-encipherment,tls-server
+/certificate sign [find where name="webfig-cert"] ca="webfig-ca"
+
+# Activer HTTPS
+/ip service set www-ssl certificate="webfig-cert" disabled=no
+
+# Laisser HTTP activé temporairement
+/ip service set www disabled=no
+
+# ================== Logs & Affichage ==================
+:put "=== W60G MONITOR ==="
+/interface w60g print detail
+/interface w60g monitor wlan60-1 once
+
+:put "=== IP ADDRESS ==="
+/ip address print where interface=bridge
+
+:put "=== Configuration appliquée avec succès ==="

@@ -1,0 +1,146 @@
+---
+- name: Configuration simple Mikrotik wAP 60G (Windows compatible)
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+  
+  vars_prompt:
+    - name: topos_username
+      prompt: "Nom d'utilisateur TOPOS"
+      private: no
+
+    - name: topos_password
+      prompt: "Mot de passe TOPOS"
+      private: yes
+
+    - name: site_id
+      prompt: "Numéro d'installation (site)"
+      private: no
+
+    - name: device_mode
+      prompt: "Type (MASTER ou SLAVE)"
+      private: no
+      default: "MASTER"
+
+  tasks:
+    - name: "1/5 - Connexion API TOPOS"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        body_format: json
+        validate_certs: no
+        body:
+          method: "login"
+          parameters:
+            username: "{{ topos_username }}"
+            password: "{{ topos_password }}"
+            application: "wifipass"
+        headers:
+          Content-Type: "application/json"
+      register: login_response
+
+    - name: Extraire le token
+      set_fact:
+        api_token: "{{ login_response.json.token | default(login_response.json.data.token) }}"
+
+    - name: "2/5 - Infos du site"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        body_format: json
+        validate_certs: no
+        body:
+          method: "getSiteInfo"
+          parameters:
+            site_id: "{{ site_id }}"
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ api_token }}"
+      register: site_response
+
+    - name: "3/5 - Liste équipements"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        body_format: json
+        validate_certs: no
+        body:
+          method: "listEquipments"
+          parameters:
+            site_id: "{{ site_id }}"
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ api_token }}"
+      register: equipments_response
+
+    - name: Afficher les équipements
+      debug:
+        msg: "{{ idx }}. {{ item.name | default(item.hostname | default('Équipement')) }} - ID: {{ item.id }}"
+      loop: "{{ equipments_response.json.data | default(equipments_response.json) }}"
+      loop_control:
+        index_var: idx
+
+    - name: Choisir l'équipement
+      pause:
+        prompt: "Numéro de l'équipement"
+      register: equip_choice
+
+    - name: Sélectionner
+      set_fact:
+        selected_equip: "{{ (equipments_response.json.data | default(equipments_response.json))[equip_choice.user_input | int] }}"
+
+    - name: "4/5 - Infos équipement"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        body_format: json
+        validate_certs: no
+        body:
+          method: "getEquipmentInfo"
+          parameters:
+            equipment_id: "{{ selected_equip.id }}"
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ api_token }}"
+      register: equipment_response
+
+    - name: Préparer les variables
+      set_fact:
+        site_data: "{{ site_response.json.data | default(site_response.json) }}"
+        equip_data: "{{ equipment_response.json.data | default(equipment_response.json) }}"
+        
+    - name: Définir toutes les variables
+      set_fact:
+        NUMINSTALLATION: "{{ site_data.installation_number | default(site_id) }}"
+        TOPOSSNMP: "{{ site_data.snmp_community | default(site_data.community | default('public')) }}"
+        TOPOSRW: "{{ site_data.rw_password | default(site_data.password | default('admin')) }}"
+        TOPOSHOSTNAME: "{{ equip_data.hostname | default(equip_data.name | default('mikrotik')) }}"
+        IPADDR: "{{ equip_data.ip_address | default(equip_data.ip | default('192.168.88.2')) }}"
+        TOPOSIP: "{{ equip_data.management_ip | default(equip_data.ip_address | default('10.10.1.1')) }}"
+        NEWSSID: "{{ equip_data.ssid | default('TOPOS-' + site_id) }}"
+        MODE: "{{ 'bridge' if device_mode | upper == 'MASTER' else 'station-bridge' }}"
+
+    - name: "5/5 - Génération config"
+      template:
+        src: templates/mikrotik_config.j2
+        dest: "./mikrotik_{{ TOPOSHOSTNAME }}.rsc"
+
+    - name: Récapitulatif
+      debug:
+        msg:
+          - "=========================================="
+          - "Configuration générée !"
+          - "=========================================="
+          - "Site: {{ NUMINSTALLATION }}"
+          - "Équipement: {{ TOPOSHOSTNAME }}"
+          - "IP: {{ IPADDR }}"
+          - "Management: {{ TOPOSIP }}"
+          - "SSID: {{ NEWSSID }}"
+          - "Mode: {{ MODE }}"
+          - "Fichier: mikrotik_{{ TOPOSHOSTNAME }}.rsc"
+          - "=========================================="
+          - ""
+          - "Pour appliquer la config manuellement:"
+          - "1. Connectez-vous: https://192.168.88.2"
+          - "2. Terminal > Collez le contenu du fichier"
+          - "=========================================="

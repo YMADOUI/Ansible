@@ -1,0 +1,349 @@
+---
+# ============================================
+# Playbook Ansible - Configuration Mikrotik wAP 60G
+# Recupere les donnees depuis l'API TOPOS et configure le pont radio
+# ============================================
+
+- name: Configuration Mikrotik wAP 60G depuis TOPOS API
+  hosts: localhost
+  gather_facts: true
+
+  tasks:
+    - name: "Verifier si le token existe en cache"
+      stat:
+        path: "/tmp/.topos_token_cache.json"
+      register: token_cache
+
+    - name: "Charger le token depuis le cache"
+      when: token_cache.stat.exists
+      block:
+        - name: "Lire le fichier de cache"
+          slurp:
+            src: "/tmp/.topos_token_cache.json"
+          register: cache_content
+
+        - name: "Parser le cache"
+          set_fact:
+            cached_data: "{{ cache_content.content | b64decode | from_json }}"
+
+        - name: "Verifier la validite du token (23h)"
+          set_fact:
+            token_valid: "{{ (ansible_date_time.epoch | int - cached_data.timestamp | int) < 82800 }}"
+
+        - name: "Token en cache valide"
+          debug:
+            msg: "Token en cache trouve et valide pour {{ cached_data.username }}"
+          when: token_valid | bool
+
+        - name: "Utiliser le token en cache"
+          set_fact:
+            topos_token: "{{ cached_data.token }}"
+            skip_login: true
+          when: token_valid | bool
+
+    - name: "Demander les identifiants TOPOS (si necessaire)"
+      when: skip_login is not defined or not skip_login
+      pause:
+        prompt: |
+          
+          ===================================
+          Le token n'est pas en cache ou a expire.
+          Veuillez entrer vos identifiants TOPOS.
+          ===================================
+          
+          Nom d'utilisateur TOPOS
+        echo: true
+      register: username_input
+
+    - name: "Demander le mot de passe TOPOS"
+      when: skip_login is not defined or not skip_login
+      pause:
+        prompt: "Mot de passe TOPOS"
+        echo: false
+      register: password_input
+
+    - name: "Demander le numero client"
+      pause:
+        prompt: "Numero client"
+        echo: true
+      register: client_input
+
+    - name: "Demander l'ID installation"
+      pause:
+        prompt: "ID Installation (numero du site)"
+        echo: true
+      register: installation_input
+
+    - name: "Definir les variables"
+      set_fact:
+        topos_username: "{{ username_input.user_input | default('') }}"
+        topos_password: "{{ password_input.user_input | default('') }}"
+        client_id: "{{ client_input.user_input }}"
+        installation_id: "{{ installation_input.user_input }}"
+
+    - name: "[1/5] Authentification TOPOS"
+      when: skip_login is not defined or not skip_login
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          method: "login"
+          parameters:
+            username: "{{ topos_username }}"
+            password: "{{ topos_password }}"
+        validate_certs: false
+      register: topos_auth
+      no_log: true
+
+    - name: "Extraire le token"
+      when: skip_login is not defined or not skip_login
+      set_fact:
+        topos_token: "{{ topos_auth.json.response.new_JWT }}"
+
+    - name: "Sauvegarder le token en cache"
+      when: skip_login is not defined or not skip_login
+      copy:
+        content: |
+          {
+            "token": "{{ topos_token }}",
+            "username": "{{ topos_username }}",
+            "timestamp": {{ ansible_date_time.epoch }}
+          }
+        dest: "/tmp/.topos_token_cache.json"
+        mode: '0600'
+
+    - name: "[2/5] Recuperation des informations du site"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ topos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          method: "installations_fiche"
+          parameters:
+            ID: "{{ installation_id }}"
+        validate_certs: false
+      register: site_info
+
+    - name: "Extraire les donnees du site"
+      set_fact:
+        topos_snmp: "{{ site_info.json.response.record.SnmpCommunity }}"
+        topos_rw: "{{ site_info.json.response.record.PasswordRW }}"
+        num_installation: "{{ site_info.json.response.record.IDInstallation }}"
+
+    - name: "Afficher les infos du site"
+      debug:
+        msg:
+          - "Installation: {{ num_installation }}"
+          - "SNMP Community: {{ topos_snmp }}"
+
+    - name: "[3/5] Recuperation de la liste des equipements"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/installations-immediate-interactions/{{ client_id }}/{{ installation_id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ topos_token }}"
+          Content-Type: "application/json"
+        validate_certs: false
+      register: equipment_list
+
+    - name: "Afficher la liste des equipements"
+      debug:
+        msg: "{{ item.name }} (ID: {{ item.id }}) [{{ item.category }}] - {{ item.modele }}"
+      loop: "{{ equipment_list.json }}"
+      loop_control:
+        index_var: idx
+        label: "[{{ idx }}] {{ item.name }}"
+
+    - name: "Demander le numero de l'equipement"
+      pause:
+        prompt: "Choisissez le numero de l'equipement"
+      register: equipment_choice
+
+    - name: "Selectionner l'equipement"
+      set_fact:
+        selected_equipment: "{{ equipment_list.json[equipment_choice.user_input | int] }}"
+        equipment_id: "{{ equipment_list.json[equipment_choice.user_input | int].id }}"
+
+    - name: "[4/5] Recuperation des informations de l'equipement"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ topos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          method: "equipements_fiche"
+          parameters:
+            ID: "{{ equipment_id }}"
+        validate_certs: false
+      register: equipment_info
+
+    - name: "Extraire les donnees de l'equipement"
+      set_fact:
+        topos_hostname: "{{ equipment_info.json.response.record.Hostname }}"
+        topos_ip: "{{ equipment_info.json.response.record.AdminIP }}"
+
+    - name: "Determiner le SSID en fonction de l'IP"
+      set_fact:
+        ip_last_octet: "{{ topos_ip.split('.')[-1] | int }}"
+
+    - name: "Definir le prefixe SSID"
+      set_fact:
+        ssid_prefix: "{% if ip_last_octet | int in [1, 2] %}lien1{% elif ip_last_octet | int in [3, 4] %}lien2{% elif ip_last_octet | int in [5, 6] %}lien3{% else %}lien1{% endif %}"
+
+    - name: "Construire le SSID complet"
+      set_fact:
+        new_ssid: "{{ ssid_prefix }}-{{ num_installation }}"
+
+    - name: "Afficher les infos de l'equipement"
+      debug:
+        msg:
+          - "Equipement: {{ topos_hostname }}"
+          - "IP Management: {{ topos_ip }}"
+          - "SSID: {{ new_ssid }}"
+          - "Password: {{ topos_rw }}"
+
+    - name: "[5/5] Generation de la configuration Mikrotik"
+      template:
+        src: templates/mikrotik_config.j2
+        dest: "mikrotik_{{ topos_hostname }}.rsc"
+      vars:
+        NUMINSTALLATION: "{{ num_installation }}"
+        TOPOSSNMP: "{{ topos_snmp }}"
+        TOPOSRW: "{{ topos_rw }}"
+        TOPOSHOSTNAME: "{{ topos_hostname }}"
+        TOPOSIP: "{{ topos_ip }}"
+        NEWSSID: "{{ new_ssid }}"
+        MODE: "bridge"
+        MODE_TEXT: "bridge"
+
+    - name: "Configuration generee avec succes"
+      debug:
+        msg: 
+          - "============================================"
+          - "  Configuration generee avec succes !"
+          - "============================================"
+          - ""
+          - "Recapitulatif:"
+          - "  Site               : {{ num_installation }}"
+          - "  Equipement         : {{ topos_hostname }}"
+          - "  IP Management      : {{ topos_ip }}"
+          - "  SSID               : {{ new_ssid }}"
+          - "  Password           : {{ topos_rw }}"
+          - "  SNMP Community     : {{ topos_snmp }}"
+          - ""
+          - "Fichier genere: mikrotik_{{ topos_hostname }}.rsc"
+
+    - name: "Demander si on applique la configuration"
+      pause:
+        prompt: "Voulez-vous appliquer la configuration sur le Mikrotik ? (oui/non)"
+      register: apply_choice
+
+    - name: "Application de la configuration sur le Mikrotik"
+      when: apply_choice.user_input == "oui"
+      block:
+        - name: "Demander le type de Mikrotik"
+          pause:
+            prompt: "Type d'equipement: [1] Master (192.168.88.2) ou [2] Slave (192.168.88.3)"
+          register: device_type
+
+        - name: "Definir l'IP du Mikrotik"
+          set_fact:
+            mikrotik_ip: "{{ '192.168.88.3' if device_type.user_input == '2' else '192.168.88.2' }}"
+
+        - name: "Demander le mot de passe admin"
+          pause:
+            prompt: "Mot de passe admin du Mikrotik (laisser vide si pas de mot de passe)"
+            echo: true
+          register: mikrotik_pass
+
+        - name: "Afficher les infos de connexion"
+          debug:
+            msg: 
+              - "IP Mikrotik: {{ mikrotik_ip }}"
+              - "Username: admin"
+              - "Password: '{{ mikrotik_pass.user_input }}'"
+
+        # ===== Configuration via SSH (fichier .rsc) =====
+        
+        - name: "[6/6] Application de la configuration via SSH"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 admin@{{ mikrotik_ip }} < mikrotik_{{ topos_hostname }}.rsc
+          args:
+            executable: /bin/bash
+          register: ssh_result
+
+        - name: "Configuration appliquee avec succes"
+          debug:
+            msg: 
+              - "============================================"
+              - "  Configuration appliquee avec succes !"
+              - "============================================"
+              - ""
+              - "RECAPITULATIF FINAL:"
+              - "--------------------"
+              - "Site               : {{ num_installation }}"
+              - "Equipement         : {{ topos_hostname }}"
+              - "IP Mikrotik Local  : {{ mikrotik_ip }}"
+              - "IP Management      : {{ topos_ip }}"
+              - "SSID               : {{ new_ssid }}"
+              - "Password WiFi      : {{ topos_rw }}"
+              - "Password Admin     : {{ topos_rw }}"
+              - "SNMP Community     : {{ topos_snmp }}"
+              - "Gateway            : 10.10.0.1"
+              - ""
+              - "VERIFICATION:"
+              - "{{ ssh_result.stdout }}"
+
+      rescue:
+        - name: "Erreur - Afficher les details"
+          debug:
+            msg: 
+              - "============================================"
+              - "  ERREUR lors de l'application"
+              - "============================================"
+              - "Code retour: {{ ssh_result.rc | default('N/A') }}"
+              - "Erreur: {{ ssh_result.stderr | default('N/A') }}"
+              - ""
+              - "Verifiez que:"
+              - "  - Le Mikrotik est bien connecte"
+              - "  - Le mot de passe est correct"
+              - "  - SSH est active sur le Mikrotik"
+
+        - name: "Demander si on reessaye"
+          pause:
+            prompt: "Voulez-vous reessayer avec un autre mot de passe ? (oui/non)"
+          register: retry_choice
+
+        - name: "Retenter avec nouveau mot de passe"
+          when: retry_choice.user_input == "oui"
+          block:
+            - name: "Redemander le mot de passe admin"
+              pause:
+                prompt: "Mot de passe admin du Mikrotik (laisser vide si pas de mot de passe)"
+                echo: true
+              register: mikrotik_pass_retry
+
+            - name: "Reapplication de la configuration via SSH"
+              shell: |
+                sshpass -p "{{ mikrotik_pass_retry.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 admin@{{ mikrotik_ip }} < mikrotik_{{ topos_hostname }}.rsc
+              args:
+                executable: /bin/bash
+              register: ssh_result_retry
+
+            - name: "Configuration appliquee avec succes (retry)"
+              debug:
+                msg: 
+                  - "============================================"
+                  - "  Configuration appliquee avec succes !"
+                  - "============================================"
+                  - "{{ ssh_result_retry.stdout }}"
+
+

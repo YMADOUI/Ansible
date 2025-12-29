@@ -1,0 +1,27 @@
+# Fichiers générés par le playbook
+mikrotik_*.rsc
+*.retry
+*.log
+
+# Cache Ansible
+.ansible/
+__pycache__/
+*.pyc
+
+# Token cache TOPOS (ne pas partager les credentials)
+.topos_token_cache.json
+
+# Fichiers temporaires Windows
+Thumbs.db
+Desktop.ini
+
+# Fichiers temporaires WSL
+*~
+.*.swp
+.*.swo
+
+# Logs
+*.log
+
+# Fichiers de configuration locale
+ansible.cfg.local
