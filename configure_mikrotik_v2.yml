@@ -73,8 +73,7 @@
         echo: true
       register: client_input
 
-    - name: "Demander l'ID installation"
-      when: installation_id is not defined
+    - name: "Demander l'ID installation (change selon le site)"
       pause:
         prompt: "ID Installation (numero du site)"
         echo: true
@@ -85,7 +84,7 @@
         topos_username: "{{ topos_username | default(username_input.user_input | default('')) }}"
         topos_password: "{{ topos_password | default(password_input.user_input | default('')) }}"
         client_id: "{{ client_id | default(client_input.user_input | default('')) }}"
-        installation_id: "{{ installation_id | default(installation_input.user_input | default('')) }}"
+        installation_id: "{{ installation_input.user_input }}"
 
     - name: "[1/5] Authentification TOPOS"
       when: skip_login is not defined or not skip_login
