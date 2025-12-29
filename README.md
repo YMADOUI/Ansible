@@ -6,6 +6,29 @@ Automatisation de la configuration des ponts radio Mikrotik wAP 60G en récupér
 
 ---
 
+## ⚙️ Configuration initiale (OBLIGATOIRE)
+
+**Avant la première utilisation**, créez le fichier `credentials.yml` avec vos identifiants TOPOS :
+
+```bash
+# Copier le fichier exemple
+cp credentials.yml.example credentials.yml
+
+# Éditer avec vos vrais identifiants
+nano credentials.yml
+```
+
+**Contenu du fichier `credentials.yml` :**
+```yaml
+topos_username: "votre_login_topos"
+topos_password: "votre_password_topos"
+installation_id: "20514"
+```
+
+⚠️ **Important** : Ce fichier est ignoré par Git pour protéger vos identifiants.
+
+---
+
 ## 📋 Fonctionnalités
 
 ✅ **Authentification TOPOS** avec cache du token JWT (23h)  

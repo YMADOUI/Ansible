@@ -7,6 +7,10 @@
 - name: Configuration Mikrotik wAP 60G depuis TOPOS API
   hosts: localhost
   gather_facts: true
+  
+  # Charger les credentials depuis credentials.yml (si le fichier existe)
+  vars_files:
+    - credentials.yml
 
   tasks:
     - name: "Verifier si le token existe en cache"
@@ -42,7 +46,7 @@
           when: token_valid | bool
 
     - name: "Demander les identifiants TOPOS (si necessaire)"
-      when: skip_login is not defined or not skip_login
+      when: (skip_login is not defined or not skip_login) and topos_username is not defined
       pause:
         prompt: |
           
@@ -56,19 +60,21 @@
       register: username_input
 
     - name: "Demander le mot de passe TOPOS"
-      when: skip_login is not defined or not skip_login
+      when: (skip_login is not defined or not skip_login) and topos_password is not defined
       pause:
         prompt: "Mot de passe TOPOS"
         echo: false
       register: password_input
 
     - name: "Demander le numero client"
+      when: client_id is not defined
       pause:
         prompt: "Numero client"
         echo: true
       register: client_input
 
     - name: "Demander l'ID installation"
+      when: installation_id is not defined
       pause:
         prompt: "ID Installation (numero du site)"
         echo: true
@@ -76,10 +82,10 @@
 
     - name: "Definir les variables"
       set_fact:
-        topos_username: "{{ username_input.user_input | default('') }}"
-        topos_password: "{{ password_input.user_input | default('') }}"
-        client_id: "{{ client_input.user_input }}"
-        installation_id: "{{ installation_input.user_input }}"
+        topos_username: "{{ topos_username | default(username_input.user_input | default('')) }}"
+        topos_password: "{{ topos_password | default(password_input.user_input | default('')) }}"
+        client_id: "{{ client_id | default(client_input.user_input | default('')) }}"
+        installation_id: "{{ installation_id | default(installation_input.user_input | default('')) }}"
 
     - name: "[1/5] Authentification TOPOS"
       when: skip_login is not defined or not skip_login

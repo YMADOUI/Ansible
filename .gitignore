@@ -11,6 +11,11 @@ __pycache__/
 # Token cache TOPOS (ne pas partager les credentials)
 .topos_token_cache.json
 
+# Variables d'environnement (credentials)
+.env
+.env.local
+credentials.yml
+
 # Fichiers temporaires Windows
 Thumbs.db
 Desktop.ini
