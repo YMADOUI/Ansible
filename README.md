@@ -22,10 +22,9 @@ nano credentials.yml
 ```yaml
 topos_username: "votre_login_topos"
 topos_password: "votre_password_topos"
-client_id: "votre_numero_client"
 ```
 
-> **Note** : L'`installation_id` sera demandé à chaque exécution car il change selon le site.
+> **Note** : L'`installation_id` et le `client_id` seront automatiquement demandés/extraits à chaque exécution.
 
 ⚠️ **Important** : Ce fichier est ignoré par Git pour protéger vos identifiants.
 

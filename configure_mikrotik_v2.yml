@@ -66,13 +66,6 @@
         echo: false
       register: password_input
 
-    - name: "Demander le numero client"
-      when: client_id is not defined
-      pause:
-        prompt: "Numero client"
-        echo: true
-      register: client_input
-
     - name: "Demander l'ID installation (change selon le site)"
       pause:
         prompt: "ID Installation (numero du site)"
@@ -83,7 +76,6 @@
       set_fact:
         topos_username: "{{ topos_username | default(username_input.user_input | default('')) }}"
         topos_password: "{{ topos_password | default(password_input.user_input | default('')) }}"
-        client_id: "{{ client_id | default(client_input.user_input | default('')) }}"
         installation_id: "{{ installation_input.user_input }}"
 
     - name: "[1/5] Authentification TOPOS"
@@ -135,16 +127,27 @@
         validate_certs: false
       register: site_info
 
+    - name: "DEBUG - Afficher la reponse API"
+      debug:
+        var: site_info.json
+
+    - name: "Verifier les erreurs d'acces"
+      fail:
+        msg: "❌ ERREUR: {{ site_info.json.error_msg }} - Verifiez l'ID installation ({{ installation_id }}) et vos droits d'acces"
+      when: site_info.json.error_msg is defined
+
     - name: "Extraire les donnees du site"
       set_fact:
-        topos_snmp: "{{ site_info.json.response.record.SnmpCommunity }}"
-        topos_rw: "{{ site_info.json.response.record.PasswordRW }}"
-        num_installation: "{{ site_info.json.response.record.IDInstallation }}"
+        topos_snmp: "{{ site_info.json.SnmpCommunity | default(site_info.json.response.record.SnmpCommunity) }}"
+        topos_rw: "{{ site_info.json.PasswordRW | default(site_info.json.response.record.PasswordRW) }}"
+        num_installation: "{{ site_info.json.IDInstallation | default(site_info.json.response.record.IDInstallation) }}"
+        client_id: "{{ site_info.json.response.record.Clients[0].IDClient }}"
 
     - name: "Afficher les infos du site"
       debug:
         msg:
           - "Installation: {{ num_installation }}"
+          - "Client ID: {{ client_id }}"
           - "SNMP Community: {{ topos_snmp }}"
 
     - name: "[3/5] Recuperation de la liste des equipements"
