@@ -1,24 +1,28 @@
 # 🔧 Installation - Outil Configuration Mikrotik wAP 60G
 
-## 📋 Prérequis Windows
+Ce guide explique comment installer et utiliser l'outil d'automatisation pour configurer les ponts radio Mikrotik wAP 60G.
 
-### 1️⃣ Installer WSL Ubuntu
+---
 
-Ouvrir **PowerShell en Administrateur** :
+## 📋 Étape 1 : Installer WSL Ubuntu
+
+Ouvrir **PowerShell en Administrateur** et exécuter :
 
 ```powershell
 wsl --install Ubuntu
 ```
 
-⚠️ **IMPORTANT** : Redémarrer le PC après l'installation.
+⚠️ **IMPORTANT** : **Redémarrer le PC** après l'installation.
 
-Au premier lancement d'Ubuntu, vous devrez :
-1. Créer un nom d'utilisateur
-2. Définir un mot de passe
+Au premier lancement d'Ubuntu, créer :
+- Un nom d'utilisateur (exemple : `technicien`)
+- Un mot de passe
 
 ---
 
-### 2️⃣ Installer Ansible et les dépendances
+## 📦 Étape 2 : Installer Ansible et les outils
+
+Dans PowerShell :
 
 ```powershell
 wsl
@@ -27,18 +31,18 @@ sudo apt install -y ansible sshpass python3-paramiko git
 exit
 ```
 
-**Vérifier l'installation :**
+**Vérifier que tout est installé :**
 ```powershell
 wsl ansible --version
-# Doit afficher : ansible [core 2.16.x]
+# Résultat attendu : ansible [core 2.16.x]
 
 wsl sshpass -V
-# Doit afficher : sshpass 1.09
+# Résultat attendu : sshpass 1.09
 ```
 
 ---
 
-### 3️⃣ Cloner le dépôt Git
+## 📥 Étape 3 : Télécharger l'outil depuis GitHub
 
 ```powershell
 cd C:\Users\%USERNAME%
@@ -46,48 +50,51 @@ wsl git clone https://github.com/YMADOUI/Ansible.git Ansible
 cd Ansible
 ```
 
-**OU** si vous avez déjà le dossier, l'initialiser avec Git :
+---
+
+## 🔑 Étape 4 : Configurer vos identifiants TOPOS
+
+**Créer le fichier de credentials :**
 
 ```powershell
 cd C:\Users\%USERNAME%\Ansible
-wsl git init
-wsl git remote add origin https://github.com/PASSMAN/ansible-mikrotik.git
-wsl git pull origin main
+wsl cp credentials.yml.example credentials.yml
+wsl nano credentials.yml
 ```
+
+**Remplir avec vos identifiants TOPOS :**
+
+```yaml
+topos_username: "votre_login_topos"
+topos_password: "votre_mot_de_passe_topos"
+```
+
+**Enregistrer et quitter :**
+- Appuyer sur `Ctrl + X`
+- Appuyer sur `Y` (Yes)
+- Appuyer sur `Entrée`
+
+⚠️ **Ce fichier ne sera jamais partagé sur Git** (il est ignoré pour votre sécurité).
 
 ---
 
-## 🔄 Mise à jour de l'outil
+## 🚀 Étape 5 : Utiliser l'outil
 
-Pour récupérer les dernières modifications :
+### 1️⃣ Configurer votre carte réseau
 
-```powershell
-cd C:\Users\%USERNAME%\Ansible
-wsl git pull
-```
+Avant de brancher le Mikrotik :
 
-C'est tout ! Vous avez maintenant la dernière version.
+- **Adresse IP** : `192.168.88.100`
+- **Masque** : `255.255.255.0`
+- **Passerelle** : `192.168.88.1`
 
----
+### 2️⃣ Brancher le Mikrotik
 
-## 🚀 Première utilisation
-
-### 1. Configuration réseau du PC
-
-Avant de brancher le Mikrotik, configurez votre carte réseau :
-
-**Paramètres réseau :**
-- Adresse IP : `192.168.88.100` (ou n'importe quelle IP en .88.x sauf .2 et .3)
-- Masque : `255.255.255.0`
-- Passerelle : `192.168.88.1`
-
-### 2. Brancher le Mikrotik
-
-1. Connecter le Mikrotik au PC via câble Ethernet
+1. Connecter le Mikrotik au PC via câble Ethernet (port PoE)
 2. Alimenter le Mikrotik
-3. Attendre 30 secondes que le Mikrotik démarre
+3. Attendre **30 secondes** que le Mikrotik démarre
 
-### 3. Tester la connexion
+### 3️⃣ Tester la connexion
 
 ```powershell
 ping 192.168.88.2
@@ -95,105 +102,112 @@ ping 192.168.88.2
 ping 192.168.88.3
 ```
 
-Si ça répond, c'est bon ! ✅
+✅ Si ça répond, c'est bon !
 
-### 4. Lancer l'outil
+### 4️⃣ Lancer l'outil
 
 ```powershell
 cd C:\Users\%USERNAME%\Ansible
 wsl ansible-playbook configure_mikrotik_v2.yml
 ```
 
-### 5. Suivre les instructions
+### 5️⃣ Suivre les instructions du playbook
 
-Le playbook vous demandera automatiquement :
+Le playbook vous demandera :
 
-1. **Identifiants TOPOS** (une seule fois, token valide 23h)
-   - Username
-   - Password
+**1. ID Installation** (numéro du site)
+   - Exemple : `35914`
 
-2. **Informations du site**
-   - Numéro client (ex: 8412)
-   - ID Installation (ex: 20514)
+**2. Sélection de l'équipement**
+   - Le playbook affiche la liste des équipements du site
+   - Choisir le numéro (ex: `1` pour le Master, `2` pour le Slave)
 
-3. **Sélection de l'équipement**
-   - Choisir le numéro dans la liste affichée
+**3. Mot de passe Mikrotik**
+   - Entrer le mot de passe admin actuel (⚠️ vide par défaut sur Mikrotik neuf)
 
-4. **Application de la configuration**
-   - Confirmer l'application : `oui`
-   - Type : `1` (Master) ou `2` (Slave)
-   - Mot de passe admin actuel du Mikrotik
+**4. Configuration appliquée automatiquement !** ✅
+
+---
+
+## 🔄 Mise à jour de l'outil
+
+Pour récupérer les dernières modifications du playbook :
+
+```powershell
+cd C:\Users\%USERNAME%\Ansible
+wsl git pull
+```
 
 ---
 
 ## ⚠️ Dépannage
 
-### Erreur "Permission denied" (SSH)
+### ❌ Erreur "Permission denied" (SSH)
 
-**Causes :**
+**Causes possibles :**
 - Mot de passe incorrect
-- SSH désactivé sur le Mikrotik
+- Mikrotik sur une autre IP (essayez `.2` au lieu de `.3`)
 
 **Solution :**
-Si c'est un Mikrotik neuf, le mot de passe est **vide** (appuyer juste sur Entrée).
+- Sur Mikrotik **neuf**, le mot de passe est **vide** (appuyez juste sur Entrée)
+- Vérifiez l'IP : `ping 192.168.88.2` puis `ping 192.168.88.3`
 
 ---
 
-### Erreur "No route to host"
+### ❌ Erreur "No route to host"
 
-**Causes :**
+**Causes possibles :**
 - Mikrotik non connecté ou éteint
-- Mauvaise configuration réseau du PC
+- PC pas en 192.168.88.x
 
 **Solution :**
-1. Vérifier le câble Ethernet
-2. Vérifier que votre PC est en 192.168.88.x
-3. Ping le Mikrotik : `ping 192.168.88.2`
+1. Vérifier le câble Ethernet (branché sur port PoE du Mikrotik)
+2. Vérifier l'IP du PC : `ipconfig` (doit afficher 192.168.88.100)
+3. Tester : `ping 192.168.88.2`
 
 ---
 
-### Erreur "Token expired"
+### ❌ Erreur "Access denied for this installation"
 
-**Causes :**
-Le token TOPOS expire après 23 heures.
+**Cause :**
+Mauvais ID Installation ou vous n'avez pas accès à ce site.
 
 **Solution :**
-C'est normal, le playbook va vous redemander vos identifiants TOPOS.
+Vérifier l'ID Installation dans TOPOS (interface web).
 
 ---
 
-### WSL ne démarre pas
+### ❌ WSL ne démarre pas
 
 **Solution :**
 ```powershell
-# Redémarrer WSL
 wsl --shutdown
 wsl
 ```
 
 ---
 
-## 📞 Support
+## 🎯 Récapitulatif rapide
 
-En cas de problème, contacter :
-- **Yassine MADOUI** - ymadoui@passman.fr
-- Équipe Infrastructure Réseau PASSMAN
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Brancher Mikrotik (câble Ethernet + alimentation)        │
+│ 2. Vérifier connexion : ping 192.168.88.2                   │
+│ 3. Lancer : wsl ansible-playbook configure_mikrotik_v2.yml  │
+│ 4. Entrer : ID Installation                                  │
+│ 5. Choisir l'équipement dans la liste                       │
+│ 6. Entrer le mot de passe Mikrotik                          │
+│ 7. ✅ Configuration appliquée automatiquement !              │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 🎯 Workflow complet
+## 📞 Support
 
-```
-1. Brancher Mikrotik → 2. Ping 192.168.88.x → 3. Lancer playbook
-           ↓                      ↓                      ↓
-    PC en .88.x            Vérifier réseau      Se connecter TOPOS
-                                                         ↓
-                                                 Choisir équipement
-                                                         ↓
-                                                 Appliquer config
-                                                         ↓
-                                                    ✅ SUCCÈS !
-```
+En cas de problème :
+- **Yassine MADOUI** - yassin.madoui@passman.fr
+- Équipe Infrastructure Réseau PASSMAN
 
 ---
 
