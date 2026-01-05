@@ -13,59 +13,6 @@
     - credentials.yml
 
   tasks:
-    - name: "Verifier si le token existe en cache"
-      stat:
-        path: "/tmp/.topos_token_cache.json"
-      register: token_cache
-
-    - name: "Charger le token depuis le cache"
-      when: token_cache.stat.exists
-      block:
-        - name: "Lire le fichier de cache"
-          slurp:
-            src: "/tmp/.topos_token_cache.json"
-          register: cache_content
-
-        - name: "Parser le cache"
-          set_fact:
-            cached_data: "{{ cache_content.content | b64decode | from_json }}"
-
-        - name: "Verifier la validite du token (23h)"
-          set_fact:
-            token_valid: "{{ (ansible_date_time.epoch | int - cached_data.timestamp | int) < 82800 }}"
-
-        - name: "Token en cache valide"
-          debug:
-            msg: "Token en cache trouve et valide pour {{ cached_data.username }}"
-          when: token_valid | bool
-
-        - name: "Utiliser le token en cache"
-          set_fact:
-            topos_token: "{{ cached_data.token }}"
-            skip_login: true
-          when: token_valid | bool
-
-    - name: "Demander les identifiants TOPOS (si necessaire)"
-      when: (skip_login is not defined or not skip_login) and topos_username is not defined
-      pause:
-        prompt: |
-          
-          ===================================
-          Le token n'est pas en cache ou a expire.
-          Veuillez entrer vos identifiants TOPOS.
-          ===================================
-          
-          Nom d'utilisateur TOPOS
-        echo: true
-      register: username_input
-
-    - name: "Demander le mot de passe TOPOS"
-      when: (skip_login is not defined or not skip_login) and topos_password is not defined
-      pause:
-        prompt: "Mot de passe TOPOS"
-        echo: false
-      register: password_input
-
     - name: "Demander l'ID installation (change selon le site)"
       pause:
         prompt: "ID Installation (numero du site)"
@@ -74,12 +21,9 @@
 
     - name: "Definir les variables"
       set_fact:
-        topos_username: "{{ topos_username | default(username_input.user_input | default('')) }}"
-        topos_password: "{{ topos_password | default(password_input.user_input | default('')) }}"
         installation_id: "{{ installation_input.user_input }}"
 
     - name: "[1/5] Authentification TOPOS"
-      when: skip_login is not defined or not skip_login
       uri:
         url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
         method: POST
@@ -96,21 +40,8 @@
       no_log: true
 
     - name: "Extraire le token"
-      when: skip_login is not defined or not skip_login
       set_fact:
         topos_token: "{{ topos_auth.json.response.new_JWT }}"
-
-    - name: "Sauvegarder le token en cache"
-      when: skip_login is not defined or not skip_login
-      copy:
-        content: |
-          {
-            "token": "{{ topos_token }}",
-            "username": "{{ topos_username }}",
-            "timestamp": {{ ansible_date_time.epoch }}
-          }
-        dest: "/tmp/.topos_token_cache.json"
-        mode: '0600'
 
     - name: "[2/5] Recuperation des informations du site"
       uri:
