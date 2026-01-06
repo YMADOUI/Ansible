@@ -72,19 +72,22 @@ add accounting-port=1805 address=212.155.93.172 authentication-port=1804 service
 /certificate remove [find where name="webfig-ca"]
 /certificate remove [find where name="webfig-cert"]
 
-# Créer CA + signature
+# Créer CA
 /certificate add name="webfig-ca" common-name="webfig-ca" key-usage=key-cert-sign,crl-sign
-/certificate sign [find where name="webfig-ca"]
 
-# Cert serveur avec usage TLS
+# Signer CA (avec délai)
+/certificate sign webfig-ca
+:delay 10s
+
+# Créer certificat serveur
 /certificate add name="webfig-cert" common-name="webfig" key-usage=digital-signature,key-encipherment,tls-server
-/certificate sign [find where name="webfig-cert"] ca="webfig-ca"
 
-# Activer HTTPS
-/ip service set www-ssl certificate="webfig-cert" disabled=no
+# Signer le certificat serveur avec le CA (avec délai)
+/certificate sign webfig-cert ca=webfig-ca
+:delay 10s
 
-# Laisser HTTP activé temporairement
-/ip service set www disabled=no
+# Activer HTTPS avec le certificat
+/ip service set www-ssl certificate=webfig-cert disabled=no
 
 # ================== Logs & Affichage ==================
 :put "=== W60G MONITOR ==="

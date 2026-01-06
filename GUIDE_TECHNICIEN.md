@@ -2,13 +2,17 @@
 
 ## ⚡ Installation rapide (première fois uniquement)
 
-### 1. Installer WSL Ubuntu
+### 1. Installer Git pour Windows
+Télécharger et installer : https://git-scm.com/download/win
+⚠️ **Fermer et rouvrir PowerShell** après installation
+
+### 2. Installer WSL Ubuntu
 ```powershell
-wsl --install Ubuntu
+wsl --install -d Ubuntu
 ```
 ⚠️ **Redémarrer le PC** après installation
 
-### 2. Installer les outils
+### 3. Installer les outils
 ```powershell
 wsl
 sudo apt update
@@ -16,14 +20,16 @@ sudo apt install -y ansible sshpass python3-paramiko git
 exit
 ```
 
-### 3. Télécharger l'outil
+### 4. Télécharger l'outil
 ```powershell
 cd C:\Users\%USERNAME%
-wsl git clone https://github.com/YMADOUI/Ansible.git Ansible
+git clone https://github.com/YMADOUI/Ansible.git Ansible
 cd Ansible
 ```
 
-### 4. Configurer vos identifiants TOPOS
+⚠️ **Si erreur "chmod failed"** : utiliser `git clone` Windows au lieu de `wsl git clone`
+
+### 5. Configurer vos identifiants TOPOS
 ```powershell
 wsl cp credentials.yml.example credentials.yml
 wsl nano credentials.yml
@@ -83,6 +89,8 @@ wsl git pull
 
 | Erreur | Solution |
 |--------|----------|
+| "git n'est pas reconnu" | Installer Git pour Windows (étape 1) + fermer/rouvrir PowerShell |
+| "chmod failed" / "Operation not permitted" | Utiliser `git clone` au lieu de `wsl git clone` (étape 4) |
 | "Permission denied" | Mot de passe vide si Mikrotik neuf (juste Entrée) |
 | "No route to host" | Vérifier câble + IP PC en 192.168.88.100 |
 | "Access denied" | Vérifier l'ID Installation dans TOPOS |

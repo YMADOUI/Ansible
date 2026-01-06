@@ -190,12 +190,18 @@
       block:
         - name: "Demander le type de Mikrotik"
           pause:
-            prompt: "Type d'equipement: [1] Master (192.168.88.2) ou [2] Slave (192.168.88.3)"
+            prompt: "Type d'equipement: [master] ou [slave]"
           register: device_type
 
-        - name: "Definir l'IP du Mikrotik"
+        - name: "Definir l'hôte cible depuis l'inventaire"
           set_fact:
-            mikrotik_ip: "{{ '192.168.88.3' if device_type.user_input == '2' else '192.168.88.2' }}"
+            target_host: "mikrotik_{{ device_type.user_input }}"
+
+        - name: "Recuperer l'IP depuis l'inventaire"
+          set_fact:
+            mikrotik_ip: "{{ hostvars[target_host]['ansible_host'] }}"
+          vars:
+            target_host: "mikrotik_{{ device_type.user_input }}"
 
         - name: "Demander le mot de passe admin"
           pause:

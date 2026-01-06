@@ -1,0 +1,396 @@
+---
+# ============================================
+# Playbook Ansible - Configuration Mikrotik wAP 60G (DIRECT v2)
+# Execute les commandes étape par étape sur le Mikrotik
+# Utilise l'inventaire pour définir les équipements
+# ============================================
+
+- name: Configuration directe Mikrotik wAP 60G
+  hosts: localhost
+  gather_facts: true
+  
+  vars_files:
+    - credentials.yml
+
+  tasks:
+    - name: "Demander l'ID installation (numero du site)"
+      pause:
+        prompt: "ID Installation (numero du site)"
+        echo: true
+      register: installation_input
+
+    - name: "Definir les variables"
+      set_fact:
+        installation_id: "{{ installation_input.user_input }}"
+
+    - name: "[1/6] Authentification TOPOS"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          method: "login"
+          parameters:
+            username: "{{ topos_username }}"
+            password: "{{ topos_password }}"
+        validate_certs: false
+      register: topos_auth
+      no_log: true
+
+    - name: "Extraire le token"
+      set_fact:
+        topos_token: "{{ topos_auth.json.response.new_JWT }}"
+
+    - name: "[2/6] Recuperation des informations du site"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ topos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          method: "installations_fiche"
+          parameters:
+            ID: "{{ installation_id }}"
+        validate_certs: false
+      register: site_info
+
+    - name: "Verifier les erreurs d'acces"
+      fail:
+        msg: "❌ ERREUR: {{ site_info.json.error_msg }} - Verifiez l'ID installation ({{ installation_id }}) et vos droits d'acces"
+      when: site_info.json.error_msg is defined
+
+    - name: "Extraire les donnees du site"
+      set_fact:
+        topos_snmp: "{{ site_info.json.SnmpCommunity | default(site_info.json.response.record.SnmpCommunity) }}"
+        topos_rw: "{{ site_info.json.PasswordRW | default(site_info.json.response.record.PasswordRW) }}"
+        num_installation: "{{ site_info.json.IDInstallation | default(site_info.json.response.record.IDInstallation) }}"
+        client_id: "{{ site_info.json.response.record.Clients[0].IDClient }}"
+
+    - name: "[3/6] Recuperation de la liste des equipements"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/installations-immediate-interactions/{{ client_id }}/{{ installation_id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ topos_token }}"
+          Content-Type: "application/json"
+        validate_certs: false
+      register: equipment_list
+
+    - name: "Afficher la liste des equipements"
+      debug:
+        msg: "{{ item.name }} (ID: {{ item.id }}) [{{ item.category }}] - {{ item.modele }}"
+      loop: "{{ equipment_list.json }}"
+      loop_control:
+        index_var: idx
+        label: "[{{ idx }}] {{ item.name }}"
+
+    - name: "Demander le numero de l'equipement"
+      pause:
+        prompt: "Choisissez le numero de l'equipement"
+      register: equipment_choice
+
+    - name: "Selectionner l'equipement"
+      set_fact:
+        selected_equipment: "{{ equipment_list.json[equipment_choice.user_input | int] }}"
+        equipment_id: "{{ equipment_list.json[equipment_choice.user_input | int].id }}"
+
+    - name: "[4/6] Recuperation des informations de l'equipement"
+      uri:
+        url: "https://www.dc-wifi.tech/interactions-equipements/webservice_passconfig"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ topos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          method: "equipements_fiche"
+          parameters:
+            ID: "{{ equipment_id }}"
+        validate_certs: false
+      register: equipment_info
+
+    - name: "Extraire les donnees de l'equipement"
+      set_fact:
+        topos_hostname: "{{ equipment_info.json.response.record.Hostname }}"
+        topos_ip: "{{ equipment_info.json.response.record.AdminIP }}"
+
+    - name: "Determiner le SSID en fonction de l'IP"
+      set_fact:
+        ip_last_octet: "{{ topos_ip.split('.')[-1] | int }}"
+
+    - name: "Definir le prefixe SSID"
+      set_fact:
+        ssid_prefix: "{% if ip_last_octet | int in [1, 2] %}lien1{% elif ip_last_octet | int in [3, 4] %}lien2{% elif ip_last_octet | int in [5, 6] %}lien3{% else %}lien1{% endif %}"
+
+    - name: "Construire le SSID complet"
+      set_fact:
+        new_ssid: "{{ ssid_prefix }}-{{ num_installation }}"
+
+    - name: "Afficher les infos de l'equipement"
+      debug:
+        msg:
+          - "Equipement: {{ topos_hostname }}"
+          - "IP Management: {{ topos_ip }}"
+          - "SSID: {{ new_ssid }}"
+          - "Password: {{ topos_rw }}"
+
+    - name: "[5/6] Generation du fichier .rsc (backup)"
+      template:
+        src: templates/mikrotik_config.j2
+        dest: "mikrotik_{{ topos_hostname }}.rsc"
+      vars:
+        NUMINSTALLATION: "{{ num_installation }}"
+        TOPOSSNMP: "{{ topos_snmp }}"
+        TOPOSRW: "{{ topos_rw }}"
+        TOPOSHOSTNAME: "{{ topos_hostname }}"
+        TOPOSIP: "{{ topos_ip }}"
+        NEWSSID: "{{ new_ssid }}"
+        MODE: "bridge"
+        MODE_TEXT: "bridge"
+
+    - name: "Demander le type de Mikrotik"
+      pause:
+        prompt: "Type d'equipement: [master] ou [slave]"
+      register: device_type
+
+    - name: "Definir l'hôte cible depuis l'inventaire"
+      set_fact:
+        target_host: "mikrotik_{{ device_type.user_input }}"
+
+    - name: "Demander le mot de passe admin actuel"
+      pause:
+        prompt: "Mot de passe admin du Mikrotik (laisser vide si pas de mot de passe)"
+        echo: true
+      register: mikrotik_pass
+
+    - name: "Definir l'hôte cible depuis l'inventaire"
+      set_fact:
+        target_host: "mikrotik_{{ device_type.user_input }}"
+        mikrotik_ip: "{{ '192.168.88.2' if device_type.user_input == 'master' else '192.168.88.3' }}"
+
+    - name: "Afficher l'hôte cible"
+      debug:
+        msg: "Configuration de l'équipement: {{ target_host }} ({{ mikrotik_ip }})"
+
+    # ===== APPLICATION DIRECTE DES COMMANDES =====
+    
+    - name: "[6/6] Configuration directe du Mikrotik"
+      block:
+        - name: "✓ Test de connexion"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 admin@{{ mikrotik_ip }} '/system identity print'
+          args:
+            executable: /bin/bash
+          register: test_connection
+
+        - name: "Connexion reussie"
+          debug:
+            msg: "✓ Connexion SSH etablie avec {{ target_host }} ({{ mikrotik_ip }})"
+
+        - name: "✓ [1/18] Configuration wlan60-1 (SSID)"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/interface w60g set [find where name="wlan60-1"] ssid={{ new_ssid }} password={{ topos_rw }} disabled=no'
+          args:
+            executable: /bin/bash
+
+        - name: "✓ [2/18] Configuration mode BRIDGE"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/interface w60g set [find where name="wlan60-1"] put-stations-in-bridge=bridge isolate-stations=yes'
+          args:
+            executable: /bin/bash
+
+        - name: "✓ [3/18] Ajout des ports au bridge (ether1)"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/interface bridge port remove [find where interface=ether1]; /interface bridge port add bridge=bridge interface=ether1 comment=defconf'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [4/18] Ajout des ports au bridge (wlan60-1)"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/interface bridge port remove [find where interface=wlan60-1]; /interface bridge port add bridge=bridge interface=wlan60-1 comment=defconf'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [5/18] Configuration Interface Lists"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/interface list remove [find where name=WAN]; /interface list remove [find where name=LAN]; /interface list add name=WAN; /interface list add name=LAN; /interface list member remove [find where interface=ether1]; /interface list member remove [find where interface=wlan60-1]; /interface list member add list=LAN interface=ether1; /interface list member add list=WAN interface=wlan60-1'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [6/18] Ajout IP Management"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/ip address remove [find where address~"^{{ topos_ip }}"]; /ip address add address={{ topos_ip }}/20 comment="ip management" interface=bridge network=10.10.0.0'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [7/18] Configuration route par defaut"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/ip route remove [find where gateway=10.10.0.1]; /ip route add dst-address=0.0.0.0/0 gateway=10.10.0.1 distance=1'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [8/18] Configuration NTP"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/system ntp client set enabled=yes; /system ntp client servers remove [find where address=10.10.0.1]; /system ntp client servers add address=10.10.0.1'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [9/18] Configuration RADIUS"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/radius remove [find]; /radius add accounting-port=1805 address=212.155.93.171 authentication-port=1804 service=login require-message-auth=no secret=Ke4TJh2d9Rsjtjkq4rSbls; /radius add accounting-port=1805 address=212.155.93.172 authentication-port=1804 service=login require-message-auth=no secret=Ke4TJh2d9Rsjtjkq4rSbls; /user aaa set use-radius=yes'
+          args:
+            executable: /bin/bash
+
+        - name: "✓ [10/18] Configuration SNMP"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/snmp set enabled=yes trap-version=2; /snmp community remove [find where name={{ topos_snmp }}]; /snmp community add name={{ topos_snmp }} addresses=0.0.0.0/0'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [11/18] Configuration System Identity"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/system identity set name={{ topos_hostname }}'
+          args:
+            executable: /bin/bash
+
+        - name: "✓ [12/18] Configuration mot de passe admin"
+          shell: |
+            sshpass -p "{{ mikrotik_pass.user_input }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/user set admin password={{ topos_rw }}'
+          args:
+            executable: /bin/bash
+
+        - name: "✓ [13/16] Configuration certificats - Suppression anciens"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/certificate remove [find where name="webfig-ca"]; /certificate remove [find where name="webfig-cert"]'
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: "✓ [14/16] Configuration certificats - Creation CA et signature"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/certificate add name="webfig-ca" common-name="webfig-ca" key-usage=key-cert-sign,crl-sign; /certificate sign webfig-ca'
+          args:
+            executable: /bin/bash
+
+        - name: "Attente signature CA (10 secondes)"
+          pause:
+            seconds: 10
+
+        - name: "✓ [15/16] Configuration certificats - Creation cert serveur et signature"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/certificate add name="webfig-cert" common-name="webfig" key-usage=digital-signature,key-encipherment,tls-server; /certificate sign webfig-cert ca=webfig-ca'
+          args:
+            executable: /bin/bash
+
+        - name: "Attente signature certificat (10 secondes)"
+          pause:
+            seconds: 10
+
+        - name: "✓ [16/16] Activation HTTPS"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/ip service set www-ssl certificate=webfig-cert disabled=no'
+          args:
+            executable: /bin/bash
+
+        - name: "Verification de la version RouterOS actuelle"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/system resource print' | grep 'version:' | sed 's/.*version: \([0-9.]*\).*/\1/'
+          args:
+            executable: /bin/bash
+          register: current_version
+
+        - name: "Afficher la version actuelle"
+          debug:
+            msg: "Version RouterOS actuelle: {{ current_version.stdout }}"
+
+        - name: "Mise a jour RouterOS vers 7.20"
+          when: current_version.stdout != "7.20"
+          block:
+            - name: "✓ [17/18] Transfert du package RouterOS 7.20"
+              shell: |
+                sshpass -p "{{ topos_rw }}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "routeros-7.20-arm .npk" admin@{{ mikrotik_ip }}:/
+              args:
+                executable: /bin/bash
+
+            - name: "✓ [18/18] Transfert du package Wireless 7.20"
+              shell: |
+                sshpass -p "{{ topos_rw }}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "wireless-7.20-arm.npk" admin@{{ mikrotik_ip }}:/
+              args:
+                executable: /bin/bash
+
+            - name: "✓ Reboot du Mikrotik pour appliquer la mise a jour"
+              shell: |
+                sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/system reboot'
+              args:
+                executable: /bin/bash
+
+            - name: "Attente du reboot et installation des packages (3 minutes)"
+              pause:
+                seconds: 180
+
+        - name: "Version deja a jour"
+          debug:
+            msg: "✓ RouterOS est deja en version 7.20, pas de mise a jour necessaire"
+          when: current_version.stdout == "7.20"
+
+        - name: "✓ Verification finale - IP Address"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/ip address print where interface=bridge'
+          args:
+            executable: /bin/bash
+          register: final_check_ip
+
+        - name: "✓ Verification finale - W60G Status"
+          shell: |
+            sshpass -p "{{ topos_rw }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@{{ mikrotik_ip }} '/interface w60g print detail'
+          args:
+            executable: /bin/bash
+          register: final_check_w60g
+
+        - name: "============================================"
+          debug:
+            msg: 
+              - "✓✓✓ Configuration appliquee avec succes ! ✓✓✓"
+              - "============================================"
+              - ""
+              - "RECAPITULATIF FINAL:"
+              - "--------------------"
+              - "Site               : {{ num_installation }}"
+              - "Equipement         : {{ topos_hostname }}"
+              - "IP Mikrotik Local  : {{ mikrotik_ip }}"
+              - "IP Management      : {{ topos_ip }}"
+              - "SSID               : {{ new_ssid }}"
+              - "Password WiFi      : {{ topos_rw }}"
+              - "Password Admin     : {{ topos_rw }}"
+              - "SNMP Community     : {{ topos_snmp }}"
+              - "Gateway            : 10.10.0.1"
+              - ""
+              - "VERIFICATION IP:"
+              - "{{ final_check_ip.stdout }}"
+              - ""
+              - "VERIFICATION W60G:"
+              - "{{ final_check_w60g.stdout }}"
+
+      rescue:
+        - name: "❌ Erreur lors de la configuration"
+          debug:
+            msg: 
+              - "============================================"
+              - "  ERREUR lors de l'application"
+              - "============================================"
+              - "Verifiez que:"
+              - "  - Le Mikrotik est bien connecte"
+              - "  - Le mot de passe est correct"
+              - "  - SSH est active sur le Mikrotik"
+              - "  - Votre carte reseau est configuree (192.168.88.100)"
